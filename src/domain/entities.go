@@ -26,6 +26,7 @@ type Team struct {
 	Name string `json:"name"`
 	//Color   string   `json:"color"`
 	Members []Player `json:"members"`
+	Score   int      `json:"score"`
 }
 
 type Game struct {

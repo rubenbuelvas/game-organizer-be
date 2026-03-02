@@ -16,7 +16,7 @@ func NewOrganizerService() *OrganizerService {
 }
 
 func (s *OrganizerService) Organize(dto OrganizerDTO) ([]domain.Team, error) {
-	teams := GenerateEmptyTeams(dto.NumberOfTeams)
+	teams := generateEmptyTeams(dto.NumberOfTeams)
 
 	if !dto.BreakFamilies {
 		organizeWithFamiliesTogether(dto, teams)
@@ -24,7 +24,12 @@ func (s *OrganizerService) Organize(dto OrganizerDTO) ([]domain.Team, error) {
 		organizeWithFamiliesSeparated(dto, teams)
 	}
 
-	return CollectTeams(teams), nil
+	for teamId, team := range teams {
+		team.Score = getTeamWeightedStatSum(team, dto.Stats)
+		teams[teamId] = team
+	}
+
+	return collectTeams(teams), nil
 }
 
 // organizeWithFamiliesTogether groups players by family and assigns entire families to teams
@@ -146,7 +151,7 @@ func countFamilyInTeam(team domain.Team, familyId int64) int {
 	return count
 }
 
-func GenerateEmptyTeams(numberOfTeams int) map[int]domain.Team {
+func generateEmptyTeams(numberOfTeams int) map[int]domain.Team {
 	teams := make(map[int]domain.Team)
 	for i := 1; i <= numberOfTeams; i++ {
 		teams[i] = domain.Team{
@@ -157,7 +162,7 @@ func GenerateEmptyTeams(numberOfTeams int) map[int]domain.Team {
 	return teams
 }
 
-func CollectTeams(teamMap map[int]domain.Team) []domain.Team {
+func collectTeams(teamMap map[int]domain.Team) []domain.Team {
 	teamList := make([]domain.Team, 0, len(teamMap))
 	for _, team := range teamMap {
 		teamList = append(teamList, team)
