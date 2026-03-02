@@ -1,22 +1,42 @@
 package main
 
 import (
+	"os"
+
 	"github.com/gin-gonic/gin"
-	"github.com/rubenbuelvas/ringover/src/application"
-	"github.com/rubenbuelvas/ringover/src/infrastructure"
-	"github.com/rubenbuelvas/ringover/src/presentation"
+	"github.com/goccy/go-yaml"
+	"github.com/rubenbuelvas/game-organizer-be/src/application"
+	"github.com/rubenbuelvas/game-organizer-be/src/presentation"
 )
 
+type Config struct {
+	App struct {
+		Route string
+	}
+}
+
 func main() {
-	// initialize repository, service and handler
-	repo := infrastructure.NewMemoryProjectRepository()
-	service := application.NewProjectService(repo)
-	handler := presentation.NewProjectHandler(service)
+	config := loadConfig()
+	engine := gin.Default()
+	applyDependencies(engine, config)
+	engine.Run(config.App.Route)
+}
 
-	// prepare Gin router
-	r := gin.Default()
-	presentation.InitRoutes(r, handler)
+func applyDependencies(engine *gin.Engine, config Config) {
+	service := application.NewOrganizerService()
+	handler := presentation.NewHandler(service)
+	presentation.InitRoutes(engine, handler)
+}
 
-	// start server
-	r.Run() // listen on :8080 by default
+func loadConfig() Config {
+	data, err := os.ReadFile("config.yaml")
+	if err != nil {
+		panic(err)
+	}
+	var config Config
+	err = yaml.Unmarshal(data, &config)
+	if err != nil {
+		panic(err)
+	}
+	return config
 }
