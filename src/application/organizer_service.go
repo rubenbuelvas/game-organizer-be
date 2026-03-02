@@ -1,9 +1,9 @@
 package application
 
 import (
+	"math"
 	"sort"
 	"strconv"
-	"strings"
 
 	"github.com/rubenbuelvas/game-organizer-be/src/domain"
 )
@@ -19,10 +19,8 @@ func (s *OrganizerService) Organize(dto OrganizerDTO) ([]domain.Team, error) {
 	teams := GenerateEmptyTeams(dto.NumberOfTeams)
 
 	if !dto.BreakFamilies {
-		// Keep families together
 		organizeWithFamiliesTogether(dto, teams)
 	} else {
-		// Separate families
 		organizeWithFamiliesSeparated(dto, teams)
 	}
 
@@ -32,9 +30,9 @@ func (s *OrganizerService) Organize(dto OrganizerDTO) ([]domain.Team, error) {
 // organizeWithFamiliesTogether groups players by family and assigns entire families to teams
 func organizeWithFamiliesTogether(dto OrganizerDTO, teams map[int]domain.Team) {
 	// Group players by family
-	familyGroups := make(map[string][]domain.Player)
+	familyGroups := make(map[int64][]domain.Player)
 	for _, player := range dto.Players {
-		familyKey := player.Family.Name
+		familyKey := player.Family.ID
 		familyGroups[familyKey] = append(familyGroups[familyKey], player)
 	}
 
@@ -44,12 +42,12 @@ func organizeWithFamiliesTogether(dto OrganizerDTO, teams map[int]domain.Team) {
 		families = append(families, group)
 	}
 
-	// Sort families by size (larger families first) for better distribution
+	// Sort families by total weighted stat (larger first) for better distribution
 	sort.Slice(families, func(i, j int) bool {
-		return len(families[i]) > len(families[j])
+		return familyWeightedValue(families[i], dto.Stats) > familyWeightedValue(families[j], dto.Stats)
 	})
 
-	// Assign families to teams trying to balance based on priority
+	// Assign families to teams trying to balance based on weighted stats
 	for _, family := range families {
 		assignFamilyToTeam(dto, teams, family)
 	}
@@ -58,28 +56,17 @@ func organizeWithFamiliesTogether(dto OrganizerDTO, teams map[int]domain.Team) {
 // assignFamilyToTeam assigns a family group to the team with the lowest target metric
 func assignFamilyToTeam(dto OrganizerDTO, teams map[int]domain.Team, family []domain.Player) {
 	var targetTeamID int
-	var lowestValue float64 = float64(^uint64(0) >> 1) // Max float
+	var lowestValue float64 = math.MaxFloat64
 
-	// Find team with lowest target value (or smallest size if priority is balanced)
+	// Find team with lowest target value (or smallest size if balanced)
 	for teamID, team := range teams {
-		var value float64
-
-		if dto.Priority == "skills" {
-			value = float64(getTeamSkillSum(team, dto.SkillBalanceType)) + float64(len(team.Members))*0.1
-		} else if dto.Priority == "stats" {
-			value = float64(getTeamStatSum(team, dto.StatBalanceType)) + float64(len(team.Members))*0.1
-		} else {
-			// Default: balance by team size
-			value = float64(len(team.Members))
-		}
-
+		value := float64(getTeamWeightedStatSum(team, dto.Stats)) + float64(len(team.Members))*0.1
 		if value < lowestValue {
 			lowestValue = value
 			targetTeamID = teamID
 		}
 	}
 
-	// Add all family members to the target team
 	for _, player := range family {
 		team := teams[targetTeamID]
 		team.Members = append(team.Members, player)
@@ -89,25 +76,13 @@ func assignFamilyToTeam(dto OrganizerDTO, teams map[int]domain.Team, family []do
 
 // organizeWithFamiliesSeparated assigns individual players to teams while trying to separate families
 func organizeWithFamiliesSeparated(dto OrganizerDTO, teams map[int]domain.Team) {
-	// Sort players by priority value (in reverse) for better distribution
 	players := make([]domain.Player, len(dto.Players))
 	copy(players, dto.Players)
 
 	sort.Slice(players, func(i, j int) bool {
-		var valI, valJ float64
-
-		if dto.Priority == "skills" {
-			valI = float64(getPlayerSkillValue(players[i], dto.SkillBalanceType))
-			valJ = float64(getPlayerSkillValue(players[j], dto.SkillBalanceType))
-		} else if dto.Priority == "stats" {
-			valI = float64(getPlayerStatValue(players[i], dto.StatBalanceType))
-			valJ = float64(getPlayerStatValue(players[j], dto.StatBalanceType))
-		}
-
-		return valI > valJ // Sort in descending order
+		return getPlayerWeightedStatValue(players[i], dto.Stats) > getPlayerWeightedStatValue(players[j], dto.Stats)
 	})
 
-	// Assign players to teams
 	for _, player := range players {
 		assignPlayerToTeam(dto, teams, player)
 	}
@@ -116,98 +91,57 @@ func organizeWithFamiliesSeparated(dto OrganizerDTO, teams map[int]domain.Team) 
 // assignPlayerToTeam assigns a single player to the team with the lowest target metric
 func assignPlayerToTeam(dto OrganizerDTO, teams map[int]domain.Team, player domain.Player) {
 	var targetTeamID int
-	var lowestValue float64 = float64(^uint64(0) >> 1)
+	var lowestValue float64 = math.MaxFloat64
 
-	// Find team with lowest target value, preferring teams without family members
 	for teamID, team := range teams {
-		var value float64
-
-		if dto.Priority == "skills" {
-			value = float64(getTeamSkillSum(team, dto.SkillBalanceType))
-		} else if dto.Priority == "stats" {
-			value = float64(getTeamStatSum(team, dto.StatBalanceType))
-		} else {
-			value = float64(len(team.Members))
-		}
-
-		// Add penalty for family members already in team
-		familyInTeam := countFamilyInTeam(team, player.Family.Name)
-		value += float64(familyInTeam) * 100 // High penalty to separate families
-
+		value := float64(getTeamWeightedStatSum(team, dto.Stats))
+		familyInTeam := countFamilyInTeam(team, player.Family.ID)
+		value += float64(familyInTeam) * 100
 		if value < lowestValue {
 			lowestValue = value
 			targetTeamID = teamID
 		}
 	}
 
-	// Add player to the target team
 	team := teams[targetTeamID]
 	team.Members = append(team.Members, player)
 	teams[targetTeamID] = team
 }
 
-// getPlayerSkillValue extracts the value of a specific skill from a player
-func getPlayerSkillValue(player domain.Player, skillType string) int {
-	switch strings.ToLower(skillType) {
-	case "agility":
-		return player.Skills.Agility
-	case "intelligence":
-		return player.Skills.Intelligence
-	case "artistic":
-		return player.Skills.Artistic
-	case "communication":
-		return player.Skills.Communication
-	default:
-		return 0
-	}
+// getPlayerWeightedStatValue computes a player's total stats weighted by importance
+func getPlayerWeightedStatValue(player domain.Player, weights domain.Stats) int {
+	return player.Stats.Agility*weights.Agility +
+		player.Stats.Intelligence*weights.Intelligence +
+		player.Stats.ArtisticSkill*weights.ArtisticSkill +
+		player.Stats.Communication*weights.Communication +
+		player.Stats.SocialEnergy*weights.SocialEnergy
 }
 
-// getPlayerStatValue extracts the value of a specific stat from a player
-func getPlayerStatValue(player domain.Player, statType string) int {
-	switch strings.ToLower(statType) {
-	case "social_energy", "socialenergy":
-		return player.Stats.SocialEnergy
-	case "age":
-		return player.Stats.Age
-	default:
-		return 0
-	}
-}
-
-// getTeamSkillSum calculates the sum of a specific skill for all team members
-func getTeamSkillSum(team domain.Team, skillType string) int {
+// getTeamWeightedStatSum calculates sum of weighted stat values for all team members
+func getTeamWeightedStatSum(team domain.Team, weights domain.Stats) int {
 	sum := 0
 	for _, player := range team.Members {
-		sum += getPlayerSkillValue(player, skillType)
+		sum += getPlayerWeightedStatValue(player, weights)
 	}
 	return sum
 }
 
-// getTeamStatSum calculates the sum of a specific stat for all team members
-func getTeamStatSum(team domain.Team, statType string) int {
-	sum := 0
-	for _, player := range team.Members {
-		sum += getPlayerStatValue(player, statType)
+// familyWeightedValue returns the combined weighted stat value for all players in a family
+func familyWeightedValue(family []domain.Player, weights domain.Stats) int {
+	total := 0
+	for _, player := range family {
+		total += getPlayerWeightedStatValue(player, weights)
 	}
-	return sum
+	return total
 }
 
 // countFamilyInTeam counts how many members of a family are in a team
-func countFamilyInTeam(team domain.Team, familyName string) int {
+func countFamilyInTeam(team domain.Team, familyId int64) int {
 	count := 0
 	for _, player := range team.Members {
-		if player.Family.Name == familyName {
+		if player.Family.ID == familyId {
 			count++
 		}
-	}
-	return count
-}
-
-// countFamilyMembers counts how many members of a family are in any team
-func countFamilyMembers(teams map[int]domain.Team, familyName string) int {
-	count := 0
-	for _, team := range teams {
-		count += countFamilyInTeam(team, familyName)
 	}
 	return count
 }

@@ -8,10 +8,5 @@ import (
 // registered in this boilerplate.
 
 func InitRoutes(router *gin.Engine, handler Handler) {
-	projGroup := router.Group("/projects")
-	projGroup.GET("", projectHandler.ListProjects)
-	projGroup.GET(":id", projectHandler.GetProject)
-	projGroup.POST("", projectHandler.CreateProject)
-	projGroup.PUT(":id", projectHandler.UpdateProject)
-	projGroup.DELETE(":id", projectHandler.DeleteProject)
+	router.POST("/organize", handler.Organize)
 }

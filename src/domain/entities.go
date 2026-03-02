@@ -17,8 +17,8 @@ type Stats struct {
 }
 
 type Family struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID int64 `json:"id"`
+	//Name string `json:"name"`
 }
 
 type Team struct {
